@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 from numpy.random import RandomState
@@ -19,8 +19,9 @@ _N_THETA: int = int(round(360.0 / _THETA_STEP_DEG))  # 72
 # Maximum rotation per single turn step (must be a multiple of _THETA_STEP_DEG).
 _MAX_TURN_DEG: float = 30.0
 
-# Maximum translation per single straight step (meters).
-_STEP_DIST_M: float = 0.3
+# Maximum translation per single straight step (meters). Small enough to
+# maneuver the tight tile gaps in the duckiematrix planning map.
+_STEP_DIST_M: float = 0.12
 
 # Drive straight if heading error is below this threshold.
 _TURN_THRESHOLD_DEG: float = _THETA_STEP_DEG / 2.0   # 2.5°
@@ -41,6 +42,7 @@ def plan(
     goal_bias: float = 0.10,
     check_dt: float = 0.10,
     seed: int = 42,
+    on_extend: Optional[Callable[[FriendlyPose, FriendlyPose], None]] = None,
 ) -> PlanningResult:
     """
     Plan a path from q.start to q.target using RRT.
@@ -82,6 +84,11 @@ def plan(
                                           _extract_path(parents, edge_steps, new_idx))
 
       6. Return PlanningResult(False, None).
+
+    Optional: if ``on_extend`` is not None, call
+    ``on_extend(nodes[nearest_idx], q_new)`` right after you add each node.
+    The notebook's tree-growth animation uses this hook to watch the tree
+    expand; the planner works fine without it.
     """
     # TODO: implement RRT planner
     raise NotImplementedError
