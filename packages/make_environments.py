@@ -21,8 +21,7 @@ from collision_protocol import (
 
 from collision_drawing import plot_geometry
 
-from shapely.affinity import rotate, translate
-from shapely.geometry import box, Point as SPoint
+from shapely_utils import as_shapely_cached, transform_shapely
 
 from se2_utils import SE2, SE2_apply_R2, pose_from_friendly
 
@@ -103,10 +102,10 @@ def get_ground_truth2(md: MapDefinition, q: CollisionCheckQuery) -> MyCollisionC
     placed_p1: PlacedPrimitive
     min_distance = 1000
     for placed_p1 in md.body:
-        body = as_shapely(placed_p1)
-        body = transform(q.pose, body)
+        body = as_shapely_cached(placed_p1)
+        body = transform_shapely(q.pose, body)
         for pp in md.environment:
-            s = as_shapely(pp)
+            s = as_shapely_cached(pp)
 
             if s.intersects(body):
                 return MyCollisionCheckResult(True, None, distance=0.0)
@@ -120,33 +119,6 @@ def get_ground_truth2(md: MapDefinition, q: CollisionCheckQuery) -> MyCollisionC
             #     return MyCollisionCheckResult(True, None)
 
     return MyCollisionCheckResult(False, None, distance=min_distance)
-
-
-def as_shapely(pp: PlacedPrimitive):
-    if not hasattr(pp, "shapely"):
-        s = get_shapely(pp.primitive)
-        s3 = transform(pp.pose, s)
-        setattr(pp, "shapely", s3)
-    return getattr(pp, "shapely")
-
-
-def transform(fp: FriendlyPose, s):
-
-    s2 = rotate(s, angle=fp.theta_deg, origin=(0, 0))
-    s3 = translate(s2, fp.x, fp.y)
-    return s3
-
-
-def get_shapely(p: Primitive):
-
-    if isinstance(p, Rectangle):
-        res = box(minx=p.xmin, maxx=p.xmax, miny=p.ymin, maxy=p.ymax)
-        return res
-    if isinstance(p, Circle):
-        center = SPoint(0, 0)
-        res = center.buffer(p.radius)
-        return res
-    assert False, p
 
 
 def collides_environment(x: Tuple[float, float], p: List[PlacedPrimitive]):
