@@ -1,5 +1,6 @@
 docs/build
 *pyc
+__pycache__/
 
 # documentation artifacts
 html/*
