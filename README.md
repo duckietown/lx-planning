@@ -72,10 +72,10 @@ If you have not done so already, set up your local SSL certificate needed to run
 Open the code editor by running the following command,
 
 ```
-dts code editor [--bind 0.0.0.0]
+dts code editor
 ```
 
-Where the `--bind` flag can be used if using a Duckietown Workspace and the browser is not automatically opening this document. Wait for a URL to appear on the terminal, then click on it or copy-paste it in the address bar of your browser to access the code editor. The first thing you will see in the code editor is this same document, you can continue there.
+Wait for a URL to appear on the terminal, then click on it or copy-paste it in the address bar of your browser to access the code editor. The first thing you will see in the code editor is this same document, you can continue there.
 
 **NOTE**: if you are running Duckietown inside a [Duckietown Workspace](https://docs.duckietown.com/ente/duckietown-manual/10-setup/00-computer/setup-duckietown-workspace.html), make sure to [install the certificate for your host machine as well](https://docs.duckietown.com/ente/duckietown-manual/10-setup/00-computer/setup-duckietown-workspace.html#running-dts-code-editor). 
 
@@ -108,8 +108,8 @@ dts duckiebot virtual start VBOT
 You should see it with a status `Booting` and finally `Ready` if you look at `dts fleet discover`: 
 
 ```
-     | Hardware |   Type    | Model |  Status  | Hostname 
----  | -------- | --------- | ----- | -------- | ---------
+       | Hardware |   Type    | Model |  Status  | Hostname 
+---    | -------- | --------- | ----- | -------- | ---------
 [VBOT] |  virtual | duckiebot | DB21J |  Ready   | [VBOT].local
 ```
 
@@ -148,22 +148,16 @@ Test your code on the virtual Duckiebot in the Duckiematrix:
 ```
 dts code workbench -m -R [VIRTUAL_ROBOT_NAME]
 ```
-<!--
-To test it on a physical Duckiebot instead:
+
+**Note 1**: Between each test you will probably want to reset the Duckiebot to its start location. If your duckie is riding the Duckiebot you can do so by making the simulator window active and then pressing `R` for Reset. 
+
+**Note 2**: You can follow the progress that your Duckiebot is making along its path by looking at the output in the `image_viewer`. In another terminal in on your laptop (or in your workspace), run 
 
 ```
-dts code workbench -R [ROBOT_NAME]
+dts duckiebot image_viewer [VIRTUAL_ROBOT_NAME] [--browser]
 ```
 
-In another terminal, you can launch the `noVNC` viewer for this LX and open RViz. 
+where the optional `--browser` option is needed in the VSCode workspace to be able to view the output in the browser as opposed to a standalone app. In the dropdown select `[VIRTUAL_ROBOT_NAME]/planning/jpeg`. 
 
-```
-dts code vnc -R [ROBOT_NAME]
-```
-
-where `[ROBOT_NAME]` could be the real or the virtual robot (use whichever you ran the `dts code workbench` and `dts code build` command with).
--->
-
-**Note**: Between each test you will probably want to reset the Duckiebot to its start location. If your duckie is riding the Duckiebot you can do so by making the simulator window active and then pressing `R` for Reset. 
 
 Now you can proceed to the [first notebook](./notebooks/01-Collision-Checker/collision_checker.ipynb).
