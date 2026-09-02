@@ -126,6 +126,52 @@ _CTRL_GOAL_YAW_TOL_DEG: float = 8.0   # final heading-alignment tolerance
 _CTRL_STEP_TIMEOUT_S: float = 6.0     # give up on a single primitive after this
 _VIZ_PROGRESS_PERIOD_S: float = 0.4   # re-publish the progress image at most this often
 
+# Startup readiness: after `dts code workbench -m` the duckiematrix stack (engine
+# session, renderer join, robot attach) comes up asynchronously, so the first fetch
+# can race it. Retry the connect+fetch with a short per-attempt timeout until the
+# stack is actually serving, capped by a total deadline. The cap is a genuine-failure
+# ceiling, not a fixed wait — a warm stack succeeds on the very first attempt.
+_CONNECT_ATTEMPT_TIMEOUT_S: float = 8.0
+_CONNECT_RETRY_BACKOFF_S: float = 2.0
+_CONNECT_TOTAL_TIMEOUT_S: float = 120.0
+
+
+def _decode_kv(raw: bytes):
+    """Decode a KVStore payload. The KVStore serves CBOR; fall back to JSON."""
+    try:
+        import cbor2
+        return cbor2.loads(raw)
+    except Exception:
+        pass
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _extract_engine_host(data: Any) -> Optional[str]:
+    """Pull the engine hostname out of a decoded hil/connection record.
+
+    Searches recursively for a ``urls`` list so it tolerates the record being
+    wrapped (e.g. header/data) rather than a flat {simulator: {urls: [...]}}.
+    """
+    def _find_urls(obj: Any):
+        if isinstance(obj, dict):
+            if obj.get("urls"):
+                return obj["urls"]
+            for v in obj.values():
+                found = _find_urls(v)
+                if found:
+                    return found
+        return None
+
+    urls = _find_urls(data)
+    if urls:
+        m = re.match(r"https?://([^:/]+)", str(urls[0]))
+        if m:
+            return m.group(1)
+    return None
+
 
 def _resolve_duckiematrix_host() -> str:
     """Find the duckiematrix engine host.
@@ -142,16 +188,15 @@ def _resolve_duckiematrix_host() -> str:
     if host:
         return host
 
-    # 2. Read from virtual robot KVStore (always accessible at 127.0.0.1:11411 from inside)
+    # 2. Read from virtual robot KVStore (always accessible at 127.0.0.1:11411 from
+    #    inside). The KVStore serves CBOR, so decode accordingly — json.loads on the
+    #    CBOR bytes was silently failing and forcing the 127.0.0.1 fallback below.
     try:
         resp = urlopen("http://127.0.0.1:11411/data/hil/connection/", timeout=3)
-        data = json.loads(resp.read())
-        urls = data.get("simulator", {}).get("urls", [])
-        print(f"[host] KVStore hil/connection urls: {urls}")
-        if urls:
-            m = re.match(r"https?://([^:/]+)", urls[0])
-            if m:
-                return m.group(1)
+        host = _extract_engine_host(_decode_kv(resp.read()))
+        print(f"[host] KVStore hil/connection host: {host!r}")
+        if host:
+            return host
     except Exception as e:
         print(f"[host] KVStore lookup failed: {e}")
 
@@ -427,6 +472,49 @@ class PlanningAgent:
         print(f"Visualization topic exposed at switchboard/{robot_name}/planning/jpeg")
         return viz_pub
 
+    async def _connect_and_load(self):
+        """Connect to the engine and fetch the initial map layers + robot pose,
+        retrying until the duckiematrix stack is actually serving them.
+
+        After `dts code workbench -m` the engine session, renderer join, and robot
+        attach all come up asynchronously, so a single fetch can arrive too early
+        (that is the "fails the first time, works the second" symptom). We retry
+        with a short per-attempt timeout and return the moment the data appears, so
+        a warm stack costs one quick attempt and only a genuine cold start waits.
+        """
+        url = f"http://{_DUCKIEMATRIX_HOST}:7501/"
+        deadline = time.monotonic() + _CONNECT_TOTAL_TIMEOUT_S
+        ctx = None
+        attempt = 0
+        while time.monotonic() < deadline and not self.is_shutdown:
+            attempt += 1
+            t0 = time.monotonic()
+            try:
+                if ctx is None:
+                    ctx = await context("duckiematrix", urls=[url])
+                    print(f"Connected to duckiematrix at {url}")
+                frames_native, tile_maps_native, pose_native = await asyncio.gather(
+                    _get_once(ctx / "map" / "frames", timeout=_CONNECT_ATTEMPT_TIMEOUT_S),
+                    _get_once(ctx / "map" / "tile_maps", timeout=_CONNECT_ATTEMPT_TIMEOUT_S),
+                    _get_once(
+                        ctx / "robot" / _ROBOT_KEY / "state" / "pose",
+                        timeout=_CONNECT_ATTEMPT_TIMEOUT_S,
+                    ),
+                )
+                print(f"[startup] Map + pose ready on attempt {attempt} "
+                      f"({time.monotonic() - t0:.1f}s).")
+                return ctx, frames_native, tile_maps_native, pose_native
+            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+                remaining = max(0.0, deadline - time.monotonic())
+                print(f"[startup] Not ready yet (attempt {attempt}, {type(e).__name__}, "
+                      f"{time.monotonic() - t0:.1f}s); duckiematrix stack still coming "
+                      f"up, {remaining:.0f}s left. Retrying...")
+                await asyncio.sleep(_CONNECT_RETRY_BACKOFF_S)
+        raise TimeoutError(
+            f"duckiematrix did not become ready within {_CONNECT_TOTAL_TIMEOUT_S:.0f}s. "
+            f"Check that `dts matrix run` is up and the robot is attached (workbench -m)."
+        )
+
     async def run(self):
         # Try to set up visualization publishing before anything else
         viz_pub = None
@@ -435,20 +523,10 @@ class PlanningAgent:
         except Exception as e:
             print(f"Note: visualization publishing unavailable: {e}")
 
-        print(f"Connecting to duckiematrix at {_DUCKIEMATRIX_HOST}:7501 ...")
-        ctx = await context("duckiematrix", urls=[f"http://{_DUCKIEMATRIX_HOST}:7501/"])
-        print("Connected.")
-
-        print("Loading map info...")
-        frames_native, tile_maps_native = await asyncio.gather(
-            _get_once(ctx / "map" / "frames"),
-            _get_once(ctx / "map" / "tile_maps"),
-        )
-        print("Map loaded.")
-
-        print("Getting initial robot pose...")
-        pose_native = await _get_once(ctx / "robot" / _ROBOT_KEY / "state" / "pose")
-        print("Pose received.")
+        print(f"Connecting to duckiematrix at {_DUCKIEMATRIX_HOST}:7501 "
+              f"(waiting for the stack to be ready)...")
+        ctx, frames_native, tile_maps_native, pose_native = await self._connect_and_load()
+        print("Map loaded. Pose received.")
 
         start = _pose_from_native(pose_native)
 
